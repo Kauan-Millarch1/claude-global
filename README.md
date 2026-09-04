@@ -2,14 +2,37 @@
 
 A portable Claude Code global setup: working rules, agents, skills, a statusline, and the plugin manifest that pulls the rest in.
 
-Clone it, run one script, restart Claude Code.
+Clone it, run one script, **restart Claude Code**.
 
 ```powershell
 git clone https://github.com/Kauan-Millarch1/claude-global.git
 cd claude-global
-.\install.ps1 -WhatIf     # see the plan, change nothing
-.\install.ps1             # do it
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -WhatIf   # see the plan, change nothing
+powershell -ExecutionPolicy Bypass -File .\install.ps1           # do it
 ```
+
+> **The restart is not optional.** Claude Code reads `settings.json`, `CLAUDE.md`
+> and its plugin list **once, at startup**. The session that ran the installer --
+> including a Claude Code session you asked to install this for you -- will not
+> pick up a single thing. Nothing appears broken; nothing appears to work either.
+> Quit and reopen.
+
+> **Why `-ExecutionPolicy Bypass`.** A fresh Windows install refuses to run any
+> `.ps1` (`CurrentUser` defaults to `Restricted`), and even under `RemoteSigned`
+> a script from a **downloaded ZIP** is blocked by mark-of-the-web. Cloning with
+> git avoids the second problem but not the first, so just use the line above.
+> If you would rather not, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+> once, and clone rather than download, has the same effect.
+
+### Asking your own Claude Code to do it
+
+That works -- it will clone, read this file and run the installer -- with two caveats
+worth knowing before you try:
+
+- **It cannot restart itself.** It will report success and you will see no change.
+  Quit and reopen Claude Code yourself.
+- **Approve the PowerShell call.** The installer needs `git`, `npm` and `claude`
+  as well; each may raise its own permission prompt.
 
 ## What you get
 
@@ -40,7 +63,7 @@ cd claude-global
 **Required:** Node 18+, git, Claude Code.
 
 **Recommended:**
-- **`rtk`** — the `PreToolUse` hook shells out to it to compress Bash output. **If you do not install it, remove the `PreToolUse` block from `~/.claude/settings.json`** — leaving the hook in place without the binary makes every Bash call fail. `RTK.md` explains what it does and when to bypass it with `rtk proxy`.
+- **`rtk`** — compresses Bash output via a `PreToolUse` hook. **You do not have to install it first:** the installer checks whether `rtk` is on your PATH and only writes the hook if it is, so a machine without `rtk` gets a working setup without output compression rather than a failing hook on every Bash call. Install it later and add the block the installer prints. `RTK.md` explains what it does and when to bypass it with `rtk proxy`.
 - **`gh`** — several skills and the CLAUDE.md rules assume it.
 - **`codex`** (OpenAI CLI) — only the `*-codex` skills need it. They are the ones that get a second model to attack your plan before you write code.
 - **Chrome or Edge** — only for `eyes`.
@@ -48,10 +71,11 @@ cd claude-global
 ## What the installer does
 
 1. **Preflight** — checks `node` and `git`, reports each optional tool as found or missing with a reason.
-2. **Copies** `CLAUDE.md`, `RTK.md`, `agents/`, `aura/`, `statusline/`, and this repo's skills into `~/.claude/`. Anything it would overwrite is backed up to `<file>.bak-<timestamp>` first, and files that already match are skipped.
-3. **Merges** `settings.template.json` into your existing `~/.claude/settings.json`. It never overwrites the file: `permissions.allow` and `permissions.deny` are unioned, so rules you already approved survive. The `__CLAUDE_HOME__` placeholder in the statusline command is resolved to your real path.
-4. **Installs** the third-party marketplaces, plugins and skills from their own sources.
-5. **Clones** `claude-eyes` and runs `npm install` in its runtime.
+2. **Copies** `RTK.md`, `agents/`, `aura/`, `statusline/`, and this repo's skills into `~/.claude/`. Anything it would overwrite is backed up to `<file>.bak-<timestamp>` first, and files that already match are skipped.
+3. **Never replaces your `CLAUDE.md`.** If you already have one and it differs, yours stays exactly where it is and the incoming version lands beside it as `CLAUDE.md.from-claude-global` for you to merge by hand. Your global rules are the last thing an installer should silently take out of service. Pass `-Force` if you genuinely want it overwritten (the old one is still backed up).
+4. **Merges** `settings.template.json` into your existing `~/.claude/settings.json`. It never overwrites the file: `permissions.allow` and `permissions.deny` are unioned, so rules you already approved survive. The `__CLAUDE_HOME__` placeholder in the statusline command is resolved to your real path, and the `rtk` hook is written only if `rtk` is installed.
+5. **Installs** the third-party marketplaces, plugins and skills from their own sources. Their output is shown, not swallowed — if one of them asks you something, you will see the question instead of a stalled cursor.
+6. **Clones** `claude-eyes` and runs `npm install` in its runtime.
 
 Run `.\install.ps1 -WhatIf` first. It prints every action and changes nothing.
 

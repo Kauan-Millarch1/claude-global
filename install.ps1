@@ -61,6 +61,11 @@ foreach ($k in $optional.Keys | Sort-Object) {
     else { Warn "$k missing -- $($optional[$k])" }
 }
 
+# The PreToolUse hook shells out to rtk on every Bash call. Installing it
+# without the binary would put a failing hook in front of every command, so the
+# hook is only written when rtk actually resolves.
+$HasRtk = [bool](Get-Command rtk -ErrorAction SilentlyContinue)
+
 if (-not (Test-Path $ClaudeHome)) {
     if ($PSCmdlet.ShouldProcess($ClaudeHome, 'create directory')) {
         New-Item -ItemType Directory -Path $ClaudeHome -Force | Out-Null
@@ -70,7 +75,15 @@ if (-not (Test-Path $ClaudeHome)) {
 # ---------------------------------------------------------------- file copy
 
 function Copy-Asset {
-    param([string]$Relative, [switch]$Directory)
+    param(
+        [string]$Relative,
+        [switch]$Directory,
+        # Never clobber this file. If the user already has a different one, the
+        # incoming version lands beside it for them to merge by hand. Used for
+        # CLAUDE.md, which is the user's own standing instructions -- replacing
+        # it silently takes their rules out of service.
+        [switch]$Preserve
+    )
 
     $src = Join-Path $Here $Relative
     $dst = Join-Path $ClaudeHome $Relative
@@ -84,6 +97,18 @@ function Copy-Asset {
             } catch { $same = $false }
         }
         if ($same) { Say "   unchanged  $Relative"; return }
+
+        if ($Preserve -and -not $Force) {
+            $side = "$dst.from-claude-global"
+            if ($PSCmdlet.ShouldProcess($side, 'write alongside instead of overwriting')) {
+                Copy-Item $src $side -Force
+                Warn "   KEPT YOURS  $Relative"
+                Say  "     You already have a different $Relative. Yours is untouched."
+                Say  "     The incoming one is at: $(Split-Path -Leaf $side)"
+                Say  '     Merge what you want, then delete it. Re-run with -Force to overwrite instead.'
+            }
+            return
+        }
 
         $backup = "$dst.bak-$Stamp"
         if ($PSCmdlet.ShouldProcess($dst, "back up to $(Split-Path -Leaf $backup)")) {
@@ -102,7 +127,7 @@ function Copy-Asset {
 }
 
 Step 'Installing portable assets'
-Copy-Asset 'CLAUDE.md'
+Copy-Asset 'CLAUDE.md' -Preserve
 Copy-Asset 'RTK.md'
 Copy-Asset 'agents'     -Directory
 Copy-Asset 'aura'       -Directory
@@ -135,6 +160,13 @@ function Remove-DocKeys {
 }
 
 $template = Remove-DocKeys (Get-Content $templatePath -Raw | ConvertFrom-Json)
+
+if (-not $HasRtk) {
+    $template.hooks.PSObject.Properties.Remove('PreToolUse')
+    Warn '   rtk not on PATH -- skipping the PreToolUse hook (it would fail on every Bash call).'
+    Say  '     Install rtk later, then add this to hooks in ~/.claude/settings.json:'
+    Say  '       "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "rtk hook claude" }] }]'
+}
 
 # Resolve the placeholder to this machine's real path. Do NOT pre-escape the
 # backslashes: ConvertTo-Json escapes them on write, and doing both yields
@@ -194,10 +226,13 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
         'JuliusBrussee/caveman',
         'pbakaus/impeccable'
     )
+    # Output is NOT silenced: these can prompt, and a swallowed prompt looks
+    # exactly like a hang. Native commands do not throw, so check the exit code.
     foreach ($m in $marketplaces) {
         if ($PSCmdlet.ShouldProcess($m, 'add marketplace')) {
-            try { claude plugin marketplace add $m 2>&1 | Out-Null; Good "  marketplace $m" }
-            catch { Warn "  marketplace $m failed: $($_.Exception.Message)" }
+            claude plugin marketplace add $m
+            if ($LASTEXITCODE -eq 0) { Good "  marketplace $m" }
+            else { Warn "  marketplace $m exited $LASTEXITCODE -- add it by hand: claude plugin marketplace add $m" }
         }
     }
     $plugins = @(
@@ -208,8 +243,9 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
     )
     foreach ($p in $plugins) {
         if ($PSCmdlet.ShouldProcess($p, 'install plugin')) {
-            try { claude plugin install $p 2>&1 | Out-Null; Good "  plugin $p" }
-            catch { Warn "  plugin $p failed: $($_.Exception.Message)" }
+            claude plugin install $p
+            if ($LASTEXITCODE -eq 0) { Good "  plugin $p" }
+            else { Warn "  plugin $p exited $LASTEXITCODE -- install it by hand: claude plugin install $p" }
         }
     }
 } else {
@@ -232,8 +268,9 @@ if (Get-Command npx -ErrorAction SilentlyContinue) {
     )
     foreach ($r in $registry) {
         if ($PSCmdlet.ShouldProcess($r, 'npx skills add')) {
-            try { npx --yes skills add $r 2>&1 | Out-Null; Good "  skills add $r" }
-            catch { Warn "  skills add $r failed -- add it manually: npx skills add $r" }
+            npx --yes skills add $r
+            if ($LASTEXITCODE -eq 0) { Good "  skills add $r" }
+            else { Warn "  skills add $r exited $LASTEXITCODE -- add it by hand: npx skills add $r" }
         }
     }
     Say '   not scripted: wshobson/agents (kpi-dashboard-design) -- large repo, add it by hand if you want it'
@@ -246,8 +283,9 @@ $setup = Join-Path $ClaudeHome 'claude-setup'
 if (Test-Path $setup) {
     Say '   already cloned  claude-setup'
 } elseif ($PSCmdlet.ShouldProcess('will-pagane/claude-setup', 'clone into .claude\claude-setup')) {
-    try { git clone --depth 1 https://github.com/will-pagane/claude-setup.git $setup 2>&1 | Out-Null; Good '  cloned claude-setup' }
-    catch { Warn "  clone claude-setup failed: $($_.Exception.Message)" }
+    git clone --depth 1 https://github.com/will-pagane/claude-setup.git $setup
+    if ($LASTEXITCODE -eq 0) { Good '  cloned claude-setup' }
+    else { Warn "  clone claude-setup exited $LASTEXITCODE -- skills from it will be missing" }
 }
 
 $setupSkills = Join-Path $setup 'skills'
@@ -267,23 +305,41 @@ $eyes = Join-Path (Join-Path $ClaudeHome 'skills') 'eyes'
 if (Test-Path $eyes) {
     Say '   already present'
 } elseif ($PSCmdlet.ShouldProcess('Kauan-Millarch1/claude-eyes', 'clone + npm install')) {
-    try {
-        git clone --depth 1 https://github.com/Kauan-Millarch1/claude-eyes.git $eyes 2>&1 | Out-Null
+    git clone --depth 1 https://github.com/Kauan-Millarch1/claude-eyes.git $eyes
+    if ($LASTEXITCODE -ne 0) {
+        Warn "  clone claude-eyes exited $LASTEXITCODE -- skipping"
+    } else {
         Push-Location (Join-Path $eyes 'runtime')
-        npm install --silent 2>&1 | Out-Null
+        npm install
+        $npmExit = $LASTEXITCODE
         Pop-Location
-        Good '  eyes installed (needs Chrome or Edge at runtime)'
-    } catch { Warn "  eyes failed: $($_.Exception.Message)" }
+        if ($npmExit -eq 0) { Good '  eyes installed (needs Chrome or Edge at runtime)' }
+        else { Warn "  npm install for eyes exited $npmExit -- run it by hand in $eyes\runtime" }
+    }
 }
 
 # ---------------------------------------------------------------- done
 
 Step 'Done'
 Write-Host ''
-Write-Host 'Next:' -ForegroundColor White
-Say '  1. Restart Claude Code so it re-reads ~/.claude/settings.json.'
-Say '  2. Install rtk, or remove the PreToolUse block from ~/.claude/settings.json.'
-Say '     Leaving the hook in place without the binary makes every Bash call fail.'
-Say '  3. Run  /help  and check the skills list. Then try  /grill-me  on any plan.'
+Write-Host '  ================================================================' -ForegroundColor Yellow
+Write-Host '   RESTART CLAUDE CODE NOW. Nothing above is active until you do.' -ForegroundColor Yellow
+Write-Host '   settings.json, CLAUDE.md and plugins are read once, at startup.' -ForegroundColor Yellow
+Write-Host '   A running session -- including the one that ran this script --' -ForegroundColor Yellow
+Write-Host '   will not pick any of it up.' -ForegroundColor Yellow
+Write-Host '  ================================================================' -ForegroundColor Yellow
+Write-Host ''
+Write-Host 'Then:' -ForegroundColor White
+Say '  - Run  /help  and check the skills list. Try  /grill-me  on any plan.'
+if (-not $HasRtk) {
+    Say '  - rtk was not found, so no Bash hook was installed. Nothing is broken;'
+    Say '    you just do not get output compression. See README to add it later.'
+}
+$kept = Get-ChildItem $ClaudeHome -Filter '*.from-claude-global' -ErrorAction SilentlyContinue
+if ($kept) {
+    Write-Host ''
+    Warn 'You already had your own versions of these -- they were NOT replaced:'
+    foreach ($k in $kept) { Say "    $($k.Name)   <- merge what you want, then delete it" }
+}
 Write-Host ''
 Say "Backups from this run are suffixed .bak-$Stamp"
