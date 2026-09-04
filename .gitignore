@@ -1,0 +1,16 @@
+# Never. This repo carries config, never credentials or session state.
+.credentials.json
+settings.json
+settings.local.json
+*.bak
+*.bak-*
+.env
+.env.*
+
+# Local state that must not travel
+history.jsonl
+*.jsonl
+.dashboard-*
+node_modules/
+.DS_Store
+Thumbs.db

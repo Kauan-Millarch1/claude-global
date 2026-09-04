@@ -1,0 +1,83 @@
+{
+  "_comment": "Template. install.ps1 merges this into ~/.claude/settings.json and replaces __CLAUDE_HOME__ with the real path. Do not copy this file verbatim — the placeholder will not resolve on its own.",
+
+  "model": "opus[1m]",
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "autoUpdatesChannel": "latest",
+
+  "statusLine": {
+    "type": "command",
+    "command": "node \"__CLAUDE_HOME__\\statusline\\statusline.mjs\"",
+    "refreshInterval": 10
+  },
+
+  "extraKnownMarketplaces": {
+    "claude-code-plugins": { "source": { "source": "github", "repo": "anthropics/claude-code" } },
+    "superpowers-dev": { "source": { "source": "github", "repo": "obra/superpowers" } },
+    "caveman": { "source": { "source": "github", "repo": "JuliusBrussee/caveman" } },
+    "impeccable": { "source": { "source": "github", "repo": "pbakaus/impeccable" } }
+  },
+
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true,
+    "caveman@caveman": true,
+    "impeccable@impeccable": true,
+    "learning-output-style@claude-code-plugins": true,
+    "coderabbit@claude-plugins-official": false,
+    "frontend-design@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false,
+    "ralph-wiggum@claude-code-plugins": false
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "rtk hook claude" }]
+      }
+    ]
+  },
+
+  "permissions": {
+    "_comment": "Deliberately minimal. These are read-only or trivially reversible. Every other rule is yours to add as Claude asks — do NOT import someone else's allowlist: each rule memorises a whole command, including URLs, resource IDs and absolute paths from the machine it was approved on.",
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote -v)",
+      "Bash(git ls-files:*)",
+      "Bash(git stash list)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(which:*)",
+      "Bash(node --version)",
+      "Bash(node --check:*)",
+      "Bash(npm ls:*)",
+      "Bash(npm run:*)",
+      "Bash(npx skills find:*)",
+      "Bash(rtk gain:*)",
+      "Bash(rtk --version)",
+      "Bash(gh auth status)",
+      "Bash(gh repo view:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(supabase --version)",
+      "Bash(supabase migration list:*)"
+    ],
+    "_denyComment": "Enforces the CLI-over-MCP rule in CLAUDE.md: these MCP write paths stamp their own migration ledger version and desync the repo from the database.",
+    "deny": [
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__deploy_edge_function",
+      "mcp__supabase__execute_sql"
+    ]
+  }
+}
